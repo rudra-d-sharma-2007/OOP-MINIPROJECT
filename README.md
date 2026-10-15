@@ -22,15 +22,20 @@ out = clamp(in × factor + offset, 0 … 255)
 * Writes **png, jpg, bmp, tga, ppm, pgm** (picked from the output file extension).
 * **One-shot mode** for scripts and an **interactive mode** that re-saves the
   result after every change so you can preview it in any image viewer.
+* A **web UI + HTTP API** (`bin/brightness_server`) with upload, brightness
+  sliders and download — deployable to any container/host that runs a command.
 * No external libraries to install — decoding/encoding uses the bundled
-  public-domain [stb](https://github.com/nothings/stb) headers in `third_party/`.
+  public-domain [stb](https://github.com/nothings/stb) headers and the bundled
+  [cpp-httplib](https://github.com/yhirose/cpp-httplib) header in `third_party/`.
 
 ### Build
 
 Requirements: `g++` (C++17) and `make`. `python3` is only needed for `make sample`.
 
 ```sh
-make            # builds bin/brightness_controller
+make            # builds bin/brightness_controller (CLI) + bin/brightness_server (web)
+make run        # start the interactive CLI
+make serve      # start the web UI on $PORT (default 10000)
 make sample     # regenerates the demo images in samples/
 make clean
 ```
@@ -91,13 +96,49 @@ make sample
 ./bin/brightness_controller samples/checker_ascii.ppm  # plain-text PPM
 ```
 
+### Web UI & API
+
+```sh
+make serve                     # or: ./bin/brightness_server 9090
+```
+
+The server binds `0.0.0.0` on the port from the first argument, or the `PORT`
+environment variable (Render and Freebuff inject one), or `10000`.
+
+| Route | Description |
+| --- | --- |
+| `GET /` | Browser UI: upload an image, drag the brightness sliders, download the result |
+| `POST /process` | `multipart/form-data`: `file` (required), `factor` (0–3), `offset` (−255…255), `format` (png/jpg/bmp/tga/ppm/pgm) → responds with the processed image |
+| `GET /healthz` | Liveness probe (`ok`) |
+
+```sh
+# API example
+ curl -F file=@photo.jpg -F factor=1.5 -F offset=-20 -F format=png \
+      http://localhost:10000/process -o brighter.png
+```
+
+### Deploying to Render
+
+Because the project ships a web server, it runs on Render (or any similar
+host) as a plain web service:
+
+| Render field | Value |
+| --- | --- |
+| **Environment** | Docker or Native (C++17 toolchain) |
+| **Build Command** | `make` |
+| **Start Command** | `./bin/brightness_server` |
+
+The server reads Render's injected `$PORT` and binds `0.0.0.0`, which is all
+Render needs. The root page doubles as Render's health-check target.
+
 ### Project layout
 
 ```
 src/main.cpp                    CLI, argument parsing, interactive loop
-src/Image.h/.cpp                Image class: load/save via stb + PNM fallback
+src/server.cpp                  HTTP server: web UI + /process API
+src/Image.h/.cpp                Image class: load/save (disk + memory) via stb, PNM fallback
 src/BrightnessController.h/.cpp BrightnessController class: factor/offset + apply()
-third_party/                    stb_image.h, stb_image_write.h (public domain)
+third_party/                    stb_image.h, stb_image_write.h, httplib.h
 samples/                        ready-made test images (ppm, png, jpg, ascii ppm)
 tools/make_samples.py           regenerates the samples (python stdlib only)
 ```
